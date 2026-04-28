@@ -154,7 +154,7 @@ bash /path/to/follow-framework/scripts/apply_follow_patch.sh
 Build firmware with a prebuilt target archive:
 
 ```bash
-bash /path/to/follow-framework/scripts/build_follow_firmware.sh /path/to/betaflight-4.5.2 STM32H743
+bash /path/to/follow-framework/scripts/build_follow_firmware.sh /path/to/betaflight-4.5.2 BETAFPVF435
 ```
 
 Pass optional metadata at build time if needed:
@@ -162,7 +162,7 @@ Pass optional metadata at build time if needed:
 ```bash
 bash /path/to/follow-framework/scripts/build_follow_firmware.sh \
   /path/to/betaflight-4.5.2 \
-  MICOAIR743V2 \
+  BETAFPVF435 \
   FOLLOW_VERSION=1.0.3 \
   FOLLOW_DESCRIPTION='internal test build' \
   -j$(nproc)

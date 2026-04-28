@@ -111,9 +111,13 @@ EXTRA_LD_FLAGS  :=
 
 FOLLOW_VERSION ?= dev
 FOLLOW_DESCRIPTION ?=
+FOLLOW_WORK_SERIAL_PORT ?= SERIAL_PORT_UART4
+FOLLOW_SIM_SERIAL_PORT ?= SERIAL_PORT_USART3
 
 EXTRA_FLAGS += -D'FOLLOW_VERSION="$(FOLLOW_VERSION)"'
 EXTRA_FLAGS += -D'FOLLOW_DESCRIPTION="$(FOLLOW_DESCRIPTION)"'
+EXTRA_FLAGS += -D'FOLLOW_WORK_SERIAL_PORT=$(FOLLOW_WORK_SERIAL_PORT)'
+EXTRA_FLAGS += -D'FOLLOW_SIM_SERIAL_PORT=$(FOLLOW_SIM_SERIAL_PORT)'
 
 #
 # Default Tool options - can be overridden in {mcu}.mk files.
@@ -447,6 +451,116 @@ replace_once(
     followAdjustCrsfDataIfNecessary();
 
     readRxChannelsApplyRanges();            // returns rcRaw
+""",
+)
+
+replace_once(
+    "src/main/cli/cli.c",
+    """#include "telemetry/frsky_hub.h"
+#include "telemetry/telemetry.h"
+
+#include "cli.h"
+""",
+    """#include "telemetry/frsky_hub.h"
+#include "telemetry/telemetry.h"
+
+#include "follow/follow_bundle.h"
+#include "cli.h"
+""",
+)
+
+replace_once(
+    "src/main/cli/cli.c",
+    """static void printConfig(const char *cmdName, char *cmdline, bool doDiff)
+""",
+    """static void printConfig(const char *cmdName, char *cmdline, bool doDiff)
+""",
+)
+
+replace_once(
+    "src/main/cli/cli.c",
+    """static void cliHelp(const char *cmdName, char *cmdline);
+""",
+    """static void cliFollowPid(const char *cmdName, char *cmdline)
+{
+    char *saveptr = NULL;
+    char *subcommand = strtok_r(cmdline, " ", &saveptr);
+
+    if (!subcommand) {
+        cliPrintLinef("followPID get <index>");
+        cliPrintLinef("followPID set <index> <28 floats>");
+        cliPrintLinef("followPID save");
+        return;
+    }
+
+    if (!strcasecmp(subcommand, "save")) {
+        if (tryPrepareSave(cmdName)) {
+            saveConfigAndNotify();
+            cliPrintLine("followPID saved");
+        }
+        return;
+    }
+
+    char *indexToken = strtok_r(NULL, " ", &saveptr);
+    if (!indexToken) {
+        cliShowInvalidArgumentCountError(cmdName);
+        return;
+    }
+
+    const int index = atoi(indexToken);
+    if (index < 0 || index >= 6) {
+        cliShowArgumentRangeError(cmdName, "INDEX", 0, 5);
+        return;
+    }
+
+    if (!strcasecmp(subcommand, "get")) {
+        if (!followCliPrintPidProfile((uint8_t)index)) {
+            cliPrintErrorLinef(cmdName, "FAILED TO READ PROFILE");
+            return;
+        }
+        return;
+    }
+
+    if (!strcasecmp(subcommand, "set")) {
+        if (!followCliSetPidProfileString((uint8_t)index, saveptr)) {
+            cliPrintErrorLinef(cmdName, "FAILED TO WRITE PROFILE");
+            return;
+        }
+
+        cliPrintLinef("followPID set %d OK", index);
+        return;
+    }
+
+    cliPrintErrorLinef(cmdName, "INVALID SUBCOMMAND");
+}
+
+static void cliHelp(const char *cmdName, char *cmdline);
+""",
+)
+
+replace_once(
+    "src/main/cli/cli.c",
+    """            dumpAllValues(cmdName, MASTER_VALUE, dumpMask, "master");
+
+            if (dumpMask & DUMP_ALL) {
+""",
+    """            dumpAllValues(cmdName, MASTER_VALUE, dumpMask, "master");
+            followCliDumpPidProfiles(dumpMask & BARE, dumpMask & DO_DIFF, dumpMask & HARDWARE_ONLY);
+
+            if (dumpMask & DUMP_ALL) {
+""",
+)
+
+replace_once(
+    "src/main/cli/cli.c",
+    """#endif
+#endif
+    CLI_COMMAND_DEF("get", "get variable value", "[name]", cliGet),
+""",
+    """#endif
+#endif
+    CLI_COMMAND_DEF("followPID", "get/set follow PID profile", "get <index> | set <index> <float...>", cliFollowPid),
+    CLI_COMMAND_DEF("get", "get variable value", "[name]", cliGet),
 """,
 )
 

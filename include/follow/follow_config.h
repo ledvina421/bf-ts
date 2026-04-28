@@ -34,6 +34,14 @@
 #define FOLLOW_DESCRIPTION ""
 #endif
 
+#ifndef FOLLOW_WORK_SERIAL_PORT
+#define FOLLOW_WORK_SERIAL_PORT SERIAL_PORT_UART4
+#endif
+
+#ifndef FOLLOW_SIM_SERIAL_PORT
+#define FOLLOW_SIM_SERIAL_PORT SERIAL_PORT_USART3
+#endif
+
 #include <math.h>
 #include <stdbool.h>
 #include <stdint.h>

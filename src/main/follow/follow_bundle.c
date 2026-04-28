@@ -1,4 +1,14 @@
 #include "follow/follow_bundle.h"
+#include "follow/follow_pid_defaults.h"
+
+#ifdef USE_CLI
+#include "cli/cli.h"
+#include "common/typeconversion.h"
+
+void cliPrintLinefeed(void);
+void cliPrintLine(const char *str);
+void cliPrintf(const char *format, ...);
+#endif
 
 followSystemData_t followSystemData = {0};
 const char *followVersion = FOLLOW_VERSION;
@@ -23,199 +33,14 @@ static followComputeTargetChannelFn followComputeTargetChannelHook = followCompu
 #define FLASH_TAG 0x55555555
 
 const followPidTable_t followDefaultPidTable = {
-    {
-
-        30.0,
-        10.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        1.0,
-        0.5,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        30.0,
-        500.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.05,
-        0.35,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-    },
-
-    {
-
-        160.0,
-        0.15,
-        110.0,
-        16.0,
-        -30.0,
-        30.0,
-        0.8,
-        0.8,
-        0.0,
-        0.04,
-        60.0,
-        -380.0,
-        380.0,
-        0.8,
-        0.1,
-        0.15,
-        1.9,
-        0.88,
-        0.12,
-        0.88,
-        0.28,
-        0.8,
-        0.5,
-        0.04,
-        60.0,
-        -380.0,
-        380.0,
-        0.0,
-    },
-
-    {
-
-        30.0,
-        10.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        1.1,
-        2.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        30.0,
-        500.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.05,
-        1.8,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-    },
-
-    {
-
-        34.0,
-        10.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.005,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        30.0,
-        500.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.05,
-        0.2,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-    },
-
-    {
-
-        900.0,
-        0.3,
-        600.0,
-        160.0,
-        -320.0,
-        320.0,
-        400.0,
-        900.0,
-        0.3,
-        600.0,
-        160.0,
-        -320.0,
-        320.0,
-        400.0,
-        30.0,
-        500.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.05,
-        0.73,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-    },
-
-    {
-
-        3.2,
-        0.0,
-        0.1,
-        60.0,
-        -180.0,
-        180.0,
-        0.0,
-        0.1,
-        0.872,
-        0.2,
-        0.0,
-        -0.1,
-        0.17453,
-        0.0,
-        30.0,
-        0.3,
-        0.0,
-        0.0,
-        0.0,
-        0.1,
-        0.58,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        0.0,
-        20.0,
-        0.0,
-    },
-
-    FLASH_TAG};
+    .profile1 = FOLLOW_PID_PROFILE1_DEFAULTS,
+    .profile2 = FOLLOW_PID_PROFILE2_DEFAULTS,
+    .profile3 = FOLLOW_PID_PROFILE3_DEFAULTS,
+    .profile4 = FOLLOW_PID_PROFILE4_DEFAULTS,
+    .profile5 = FOLLOW_PID_PROFILE5_DEFAULTS,
+    .profile6 = FOLLOW_PID_PROFILE6_DEFAULTS,
+    .flashInitFlag = FLASH_TAG,
+};
 
 PG_RESET_TEMPLATE(followPidTable_t, dynPidGroup,
                   .profile1 = followDefaultPidTable.profile1,
@@ -424,6 +249,222 @@ followPidTable_t followPidTable = {0};
 followPidValues_t followCurrentPid = {0};
 PG_DECLARE(followPidTable_t, dynPidGroup);
 PG_REGISTER_WITH_RESET_TEMPLATE(followPidTable_t, dynPidGroup, PG_DYN_PID_CONFIG, 1);
+
+static followPidValues_t *followPidProfileMutableByIndex(uint8_t index)
+{
+  if (index >= 6)
+  {
+    return NULL;
+  }
+
+  return &dynPidGroupMutable()->profile1 + index;
+}
+
+static const followPidValues_t *followPidProfileByIndex(uint8_t index)
+{
+  if (index >= 6)
+  {
+    return NULL;
+  }
+
+  return &dynPidGroup()->profile1 + index;
+}
+
+static const followPidValues_t *followPidProfileCopyByIndex(uint8_t index)
+{
+  if (index >= 6)
+  {
+    return NULL;
+  }
+
+  return &dynPidGroup_Copy.profile1 + index;
+}
+
+static uint8_t followSelectedPidProfileIndex(void)
+{
+  if (followSystemData.autoControlMode == FOLLOW_AUTO_CONTROL_ACRO)
+  {
+    if (followSystemData.traceLensType == 0x00)
+    {
+      if (followSystemData.visibleLensType == 0x01 || followSystemData.visibleLensType == 0x02)
+      {
+        return 1;
+      }
+
+      return 0;
+    }
+
+    if (followSystemData.traceLensType == 0x08)
+    {
+      return 1;
+    }
+
+    if (followSystemData.traceLensType == 0x04)
+    {
+      return 2;
+    }
+  }
+  else if (followSystemData.autoControlMode == FOLLOW_AUTO_CONTROL_ANGLE)
+  {
+    if (followSystemData.traceLensType == 0x00)
+    {
+      if (followSystemData.visibleLensType == 0x01 || followSystemData.visibleLensType == 0x02)
+      {
+        return 4;
+      }
+
+      return 3;
+    }
+
+    if (followSystemData.traceLensType == 0x08)
+    {
+      return 4;
+    }
+
+    if (followSystemData.traceLensType == 0x04)
+    {
+      return 5;
+    }
+  }
+
+  return 0;
+}
+
+bool followGetPidProfile(uint8_t index, followPidValues_t *out)
+{
+  const followPidValues_t *pid = followPidProfileByIndex(index);
+
+  if (!pid || !out)
+  {
+    return false;
+  }
+
+  *out = *pid;
+  return true;
+}
+
+bool followSetPidProfile(uint8_t index, const float *values, uint8_t count)
+{
+  followPidValues_t *pid = followPidProfileMutableByIndex(index);
+
+  if (!pid || !values)
+  {
+    return false;
+  }
+
+  float raw[FOLLOW_PID_VALUE_COUNT] = {0.0f};
+  const uint8_t limitedCount = count > FOLLOW_PID_VALUE_COUNT ? FOLLOW_PID_VALUE_COUNT : count;
+  const bool updateCurrentPid = (followSelectedPidProfileIndex() == index);
+  memcpy(raw, values, limitedCount * sizeof(float));
+  memcpy(pid, raw, sizeof(*pid));
+
+  *(&followPidTable.profile1 + index) = *pid;
+
+  if (updateCurrentPid)
+  {
+    followCurrentPid = *pid;
+  }
+
+  setConfigDirty();
+
+  return true;
+}
+
+#ifdef USE_CLI
+static void followCliPrintPidProfileValues(const char *prefix, uint8_t index, const followPidValues_t *pid)
+{
+  const float *values = (const float *)pid;
+  char buf[FTOA_BUFFER_LENGTH];
+
+  cliPrintf("%s %d", prefix, index);
+  for (int i = 0; i < FOLLOW_PID_VALUE_COUNT; i++)
+  {
+    cliPrintf(" %s", ftoa(values[i], buf));
+  }
+  cliPrintLinefeed();
+}
+
+bool followCliPrintPidProfile(uint8_t index)
+{
+  followPidValues_t pid = {0};
+
+  if (!followGetPidProfile(index, &pid))
+  {
+    return false;
+  }
+
+  followCliPrintPidProfileValues("followPID", index, &pid);
+  return true;
+}
+
+bool followCliSetPidProfileString(uint8_t index, char *valueString)
+{
+  float values[FOLLOW_PID_VALUE_COUNT] = {0.0f};
+  uint8_t valueCount = 0;
+  char *saveptr = NULL;
+  char *token = strtok_r(valueString, " ", &saveptr);
+
+  while (token)
+  {
+    if (valueCount < FOLLOW_PID_VALUE_COUNT)
+    {
+      values[valueCount++] = (float)strtod(token, NULL);
+    }
+    token = strtok_r(NULL, " ", &saveptr);
+  }
+
+  return followSetPidProfile(index, values, valueCount);
+}
+
+void followCliDumpPidProfiles(bool bare, bool diff, bool hardwareOnly)
+{
+  if (hardwareOnly)
+  {
+    return;
+  }
+
+  if (!bare)
+  {
+    cliPrintLine("# follow pid");
+  }
+
+  for (uint8_t index = 0; index < 6; index++)
+  {
+    const followPidValues_t *pid = followPidProfileCopyByIndex(index);
+    if (!pid)
+    {
+      continue;
+    }
+
+    followCliPrintPidProfileValues("followPID set", index, pid);
+  }
+
+  if (!diff && !bare)
+  {
+    cliPrintLine("followPID save");
+  }
+}
+#else
+bool followCliPrintPidProfile(uint8_t index)
+{
+  UNUSED(index);
+  return false;
+}
+
+bool followCliSetPidProfileString(uint8_t index, char *valueString)
+{
+  UNUSED(index);
+  UNUSED(valueString);
+  return false;
+}
+
+void followCliDumpPidProfiles(bool bare, bool diff, bool hardwareOnly)
+{
+  UNUSED(bare);
+  UNUSED(diff);
+  UNUSED(hardwareOnly);
+}
+#endif
 
 void followUpdateRcData(void *data, uint8_t size)
 {
@@ -1085,12 +1126,12 @@ bool followTrackerInit(void)
   int8_t serial_mask = 0;
   if (!followWorkPort)
   {
-    followWorkPort = openSerialPort(SERIAL_PORT_UART4, FUNCTION_NONE, NULL, NULL,
+    followWorkPort = openSerialPort(FOLLOW_WORK_SERIAL_PORT, FUNCTION_NONE, NULL, NULL,
                                     115200, MODE_RXTX, SERIAL_NOT_INVERTED);
   }
   if (!followSimPort)
   {
-    followSimPort = openSerialPort(SERIAL_PORT_USART3, FUNCTION_NONE, NULL, NULL,
+    followSimPort = openSerialPort(FOLLOW_SIM_SERIAL_PORT, FUNCTION_NONE, NULL, NULL,
                                    115200, MODE_RXTX, SERIAL_NOT_INVERTED);
   }
   serial_mask |= (followWorkPort ? 1 : 0);

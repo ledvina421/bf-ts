@@ -93,6 +93,8 @@ typedef struct {
     float yawFilterAlpha;
 } followPidValues_t;
 
+#define FOLLOW_PID_VALUE_COUNT 28
+
 typedef struct {
     float expected;
     float error;
