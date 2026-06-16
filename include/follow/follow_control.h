@@ -28,6 +28,7 @@ void followUpdateRcData(void *data, uint8_t size);
 void followDealWithRcValues(void);
 void followStartTrackProcess(void);
 int8_t followAdjustCrsfDataIfNecessary(void);
+bool followCrsfOverridePending(void);
 void followSetCommandHooks(const followCommandHooks_t *hooks);
 const followCommandHooks_t *followGetCommandHooks(void);
 void followResetCommandHooks(void);

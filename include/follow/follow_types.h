@@ -105,6 +105,7 @@ typedef struct {
     float dt;
     float output;
     float outputLimit;
+    float outputLast;
 } followPidRuntime_t;
 
 typedef struct {
@@ -199,7 +200,9 @@ typedef struct {
     uint32_t testPeriodCount;
     uint32_t testPeriod;
     float trackAttenuationXY;
+    float feedforwardAttenuationXY;
     uint32_t trackAttenuationStartMs;
+    uint32_t trackUpdatedTimeMs;
     float minTrackPitchDeg;
     uint8_t reduceTrackPitch;
     uint8_t controlLaunchStatus;

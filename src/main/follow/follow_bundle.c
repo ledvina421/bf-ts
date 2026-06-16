@@ -30,7 +30,7 @@ static followCommandHooks_t followCommandHooks = {
 
 static followComputeTargetChannelFn followComputeTargetChannelHook = followComputeTargetChannelDefault;
 
-#define FLASH_TAG 0x55555555
+#define FLASH_TAG 0x55555556
 
 const followPidTable_t followDefaultPidTable = {
     .profile1 = FOLLOW_PID_PROFILE1_DEFAULTS,
@@ -243,12 +243,45 @@ void followUpdateAttitude(float pitch, float roll, float yaw)
 volatile uint8_t followModeActive = 0;
 volatile float followAdjustedChannels[4] = {0};
 volatile uint8_t followRcDataUpdated = 0;
+static volatile uint8_t followCrsfOverridePendingFlag = 0;
 followRcChannels_t followRcChannels = {0};
 followPidTable_t followPidTable = {0};
 
 followPidValues_t followCurrentPid = {0};
 PG_DECLARE(followPidTable_t, dynPidGroup);
 PG_REGISTER_WITH_RESET_TEMPLATE(followPidTable_t, dynPidGroup, PG_DYN_PID_CONFIG, 1);
+
+static uint32_t followConstrainCrsfChannel(float value)
+{
+  if (value < RC_RANGE_MIN)
+  {
+    return RC_RANGE_MIN;
+  }
+  if (value > RC_RANGE_MAX)
+  {
+    return RC_RANGE_MAX;
+  }
+  return (uint32_t)value;
+}
+
+static void followSetAdjustedChannels(float roll, float pitch, float yaw, float throttle)
+{
+  followAdjustedChannels[0] = roll;
+  followAdjustedChannels[1] = pitch;
+  followAdjustedChannels[2] = yaw;
+  followAdjustedChannels[3] = throttle;
+  followCrsfOverridePendingFlag = 1;
+}
+
+static void followRequestCrsfDataRefresh(void)
+{
+  followCrsfOverridePendingFlag = 1;
+}
+
+bool followCrsfOverridePending(void)
+{
+  return followCrsfOverridePendingFlag != 0;
+}
 
 static followPidValues_t *followPidProfileMutableByIndex(uint8_t index)
 {
@@ -535,10 +568,12 @@ void followDealWithRcValues(void)
         followCommandHooks.stopTrack();
         adj_pos_on = 1;
         ch6_toggled = false;
+        pwmWriteServo(0, 1000);
 
         followSystemData.traceState = 0;
         followSystemData.mode = 0;
         followModeActive = 0;
+        followRequestCrsfDataRefresh();
       }
     }
 
@@ -568,6 +603,7 @@ void followDealWithRcValues(void)
         followSystemData.traceState = 0;
         followSystemData.mode = 0;
         followModeActive = 0;
+        followRequestCrsfDataRefresh();
       }
     }
 
@@ -698,6 +734,8 @@ void followStartTrackProcess(void)
 
   followSystemData.startYawDeg = followSystemData.yawDeg;
 
+  followSetAdjustedChannels(RC_RANGE_TERM, RC_RANGE_TERM, RC_RANGE_TERM, RC_RANGE_TH_MIN);
+
   if (followSystemData.autoControlMode == FOLLOW_AUTO_CONTROL_ACRO)
   {
     followSystemData.startRollDeg = followSystemData.rollDeg;
@@ -723,6 +761,7 @@ void followStartTrackProcess(void)
   followSystemData.firstView = 1;
 
   followSystemData.trackAttenuationXY = 0.0f;
+  followSystemData.feedforwardAttenuationXY = 0.0f;
 
   followSystemData.reduceTrackPitch = false;
   followSystemData.minTrackPitchDeg = followPidTable.profile6.pitchMinOutput;
@@ -733,8 +772,13 @@ void followStartTrackProcess(void)
   }
   else
   {
-    followSystemData.controlLaunchStatus = FOLLOW_LAUNCH_STATUS_GUIDANCE;
+    followSystemData.controlLaunchStatus = FOLLOW_LAUNCH_STATUS_TAKEOFF;
   }
+
+  followSystemData.controlLaunchTimeMs = millis();
+  followSystemData.trackUpdatedTimeMs = millis();
+  followSystemData.traceStage = 0;
+  pwmWriteServo(0, 1000);
 
   followResetPitOffRateWindow();
 
@@ -759,12 +803,31 @@ void followCalcAttitude(void)
     followSystemData.traceUpdated = 0;
 
     followHandleGuidance();
+    followSystemData.trackUpdatedTimeMs = millis();
+  }
+  else if ((millis() - followSystemData.trackUpdatedTimeMs) > 100)
+  {
+    followSystemData.targetRollChannel = RC_RANGE_TERM;
+    followSystemData.targetPitchChannel = RC_RANGE_TERM;
+    followSystemData.trackAttenuationStartMs = millis() - 100;
   }
 
-  followAdjustedChannels[0] = followSystemData.targetRollChannel;
-  followAdjustedChannels[1] = followSystemData.targetPitchChannel;
-  followAdjustedChannels[2] = followSystemData.targetYawChannel;
-  followAdjustedChannels[3] = followSystemData.targetAccChannel;
+  followSetAdjustedChannels(followSystemData.targetRollChannel,
+                            followSystemData.targetPitchChannel,
+                            followSystemData.targetYawChannel,
+                            followSystemData.targetAccChannel);
+}
+
+void followFuseTriggerHandle(uint32_t startTimeMs)
+{
+  if (ARMING_FLAG(ARMED) && followSystemData.traceStage == 1 && startTimeMs >= 2000)
+  {
+    pwmWriteServo(0, 2000);
+  }
+  else
+  {
+    pwmWriteServo(0, 1000);
+  }
 }
 
 void followHandleGuidance(void)
@@ -813,9 +876,20 @@ void followHandleGuidance(void)
     break;
   case FOLLOW_LAUNCH_STATUS_TAKEOFF:
 
-    if (millis() - followSystemData.controlLaunchTimeMs > 1500)
+    if (millis() - followSystemData.controlLaunchTimeMs > 100)
     {
       followSystemData.controlLaunchStatus = FOLLOW_LAUNCH_STATUS_GUIDANCE;
+      followSystemData.targetRollChannel = RC_RANGE_TERM;
+      followSystemData.targetPitchChannel = RC_RANGE_TERM;
+      followSystemData.targetYawChannel = RC_RANGE_TERM;
+      followSystemData.targetAccChannel = RC_RANGE_MIN;
+    }
+    else
+    {
+      followSystemData.targetRollChannel = RC_RANGE_TERM;
+      followSystemData.targetPitchChannel = RC_RANGE_TERM;
+      followSystemData.targetYawChannel = RC_RANGE_TERM;
+      followSystemData.targetAccChannel = RC_RANGE_MIN;
     }
     break;
   case FOLLOW_LAUNCH_STATUS_GUIDANCE:
@@ -827,14 +901,41 @@ void followHandleGuidance(void)
 int8_t followAdjustCrsfDataIfNecessary(void)
 {
   uint32_t *ptr = followGetCrsfChannelData();
-  if (ptr && 1 == followModeActive)
+  uint32_t channel[4] = {0};
+  bool shouldUpdate = false;
+
+  if (!ptr)
   {
-    ptr[0] = (uint32_t)followAdjustedChannels[0];
-    ptr[1] = (uint32_t)followAdjustedChannels[1];
-    ptr[3] = (uint32_t)followAdjustedChannels[2];
-    ptr[2] = (uint32_t)followAdjustedChannels[3];
+    return 0;
+  }
+
+  if (1 == followModeActive)
+  {
+    channel[0] = followConstrainCrsfChannel(followAdjustedChannels[0]);
+    channel[1] = followConstrainCrsfChannel(followAdjustedChannels[1]);
+    channel[2] = followConstrainCrsfChannel(followAdjustedChannels[2]);
+    channel[3] = followConstrainCrsfChannel(followAdjustedChannels[3]);
+    shouldUpdate = true;
+  }
+  else if (followCrsfOverridePendingFlag)
+  {
+    channel[0] = followConstrainCrsfChannel(followRcChannels.ch1);
+    channel[1] = followConstrainCrsfChannel(followRcChannels.ch2);
+    channel[2] = followConstrainCrsfChannel(followRcChannels.ch4);
+    channel[3] = followConstrainCrsfChannel(followRcChannels.ch3);
+    shouldUpdate = true;
+  }
+
+  if (shouldUpdate)
+  {
+    followCrsfOverridePendingFlag = 0;
+    ptr[0] = channel[0];
+    ptr[1] = channel[1];
+    ptr[3] = channel[2];
+    ptr[2] = channel[3];
     return 1;
   }
+
   return 0;
 }
 
@@ -1038,7 +1139,7 @@ void followSelectPidProfile(void)
       if (followSystemData.visibleLensType == 0x01 || followSystemData.visibleLensType == 0x02)
       {
         temp_pid = &(followPidTable.profile2);
-        followSystemData.pixelFocalLength = 2375;
+        followSystemData.pixelFocalLength = 2666;
       }
       else
       {
@@ -1049,7 +1150,7 @@ void followSelectPidProfile(void)
     else if (followSystemData.traceLensType == 0x08)
     {
       temp_pid = &(followPidTable.profile2);
-      followSystemData.pixelFocalLength = 2375;
+      followSystemData.pixelFocalLength = 2666;
     }
     else if (followSystemData.traceLensType == 0x04)
     {
@@ -1092,6 +1193,7 @@ serialPort_t *followWorkPort = NULL;
 serialPort_t *followSimPort = NULL;
 kfifo_t _serialInput = {0};
 kfifo_t _simInput = {0};
+static uint32_t followTrackBeepIntervals = 0;
 
 extern void followOverrideRegisterHooks(void) __attribute__((weak));
 
@@ -1136,6 +1238,8 @@ bool followTrackerInit(void)
   }
   serial_mask |= (followWorkPort ? 1 : 0);
   serial_mask |= (followSimPort ? 2 : 0);
+
+  pwmWriteServo(0, 1000);
 
   followPrintDebug("followTrackerInit\n");
 
@@ -1300,6 +1404,17 @@ void followAnalyzeSerialInput(void)
       frame[0] = 0x90;
       frame[1] = 0xeb;
       frame[2] = 0x0e;
+    }
+    if (0x41 == frame[2])
+    {
+      if (frame[3] == 1)
+      {
+        if ((millis() - followTrackBeepIntervals) > 200)
+        {
+          beeperConfirmationBeeps(1);
+          followTrackBeepIntervals = millis();
+        }
+      }
     }
     kfifo_skip(&_serialInput, max_frm_size);
     followSelectPidProfile();

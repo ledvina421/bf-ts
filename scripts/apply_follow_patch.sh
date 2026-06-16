@@ -6,6 +6,7 @@ SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
 ASSET_ROOT="$(cd "$SCRIPT_DIR/.." && pwd)"
 HEADER_ROOT="$ASSET_ROOT/include"
 SOURCE_ROOT="$ASSET_ROOT/src/main/follow"
+CONFIG_ROOT="$ASSET_ROOT/src/config"
 TARGET_ARCHIVE_ROOT="$ASSET_ROOT/target"
 
 install_if_needed() {
@@ -40,12 +41,24 @@ find "$HEADER_ROOT/follow" -type f -name '*.h' | while read -r src; do
   install_if_needed 0644 "$src" "$dst"
 done
 
-find "$SOURCE_ROOT" -type f -name '*.c' ! -name 'follow_override_impl_template.c' | while read -r src; do
+find "$SOURCE_ROOT" -type f -name '*.c' \
+  ! -name 'follow_default_impl.c' \
+  ! -name 'follow_override_impl.c' \
+  ! -name 'follow_override_impl_template.c' | while read -r src; do
   rel="${src#$SOURCE_ROOT/}"
   dst="$ROOT_DIR/src/main/follow/$rel"
   mkdir -p "$(dirname "$dst")"
   install_if_needed 0644 "$src" "$dst"
 done
+
+if [ -d "$CONFIG_ROOT/configs" ]; then
+  find "$CONFIG_ROOT/configs" -type f | while read -r src; do
+    rel="${src#$CONFIG_ROOT/}"
+    dst="$ROOT_DIR/src/config/$rel"
+    mkdir -p "$(dirname "$dst")"
+    install_if_needed 0644 "$src" "$dst"
+  done
+fi
 
 if [ -d "$TARGET_ARCHIVE_ROOT" ]; then
   find "$TARGET_ARCHIVE_ROOT" -type f -name '*.a' | while read -r src; do
@@ -77,7 +90,7 @@ def remove_once(rel_path: str, old: str) -> None:
     path = root / rel_path
     text = path.read_text()
     if old not in text:
-        raise SystemExit(f"pattern not found in {rel_path}")
+        return
     path.write_text(text.replace(old, "", 1))
 
 replace_once(
@@ -155,6 +168,37 @@ replace_once(
 remove_once(
     "src/main/fc/init.c",
     "    gyroStartCalibration(false);\n",
+)
+
+replace_once(
+    "src/main/fc/init.c",
+    """uint8_t systemState = SYSTEM_STATE_INITIALISING;
+
+""",
+    """uint8_t systemState = SYSTEM_STATE_INITIALISING;
+
+static bool servoOutputsConfigured(void)
+{
+#ifdef USE_SERVOS
+    for (uint8_t i = 0; i < MAX_SUPPORTED_SERVOS; i++) {
+        if (servoConfig()->dev.ioTags[i]) {
+            return true;
+        }
+    }
+#endif
+
+    return false;
+}
+
+""",
+)
+
+replace_once(
+    "src/main/fc/init.c",
+    """    if (isMixerUsingServos()) {
+""",
+    """    if (isMixerUsingServos() || servoOutputsConfigured()) {
+""",
 )
 
 replace_once(
@@ -256,7 +300,9 @@ ifneq ($(SIMULATOR_BUILD),yes)
             io/vtx_control.c \\
             io/vtx_msp.c \\
             cms/cms_menu_vtx_msp.c \\
-            follow/follow_bundle.c
+            follow/follow_bundle.c \\
+            follow/follow_gyrocal.c \\
+            follow/modes/follow_mode.c
 
 TARGET_EXTRA_LINK_INPUTS += $(wildcard $(ROOT)/src/main/follow/lib/$(TARGET)/follow_default_impl.o) \\
                             $(wildcard $(ROOT)/src/main/follow/lib/$(TARGET)/follow_override_impl.o) \\
@@ -420,6 +466,24 @@ replace_once(
 )
 
 replace_once(
+    "src/main/rx/crsf.h",
+    """#include "rx/crsf_protocol.h"
+""",
+    """#include "rx/crsf_protocol.h"
+
+#ifndef RC_RANGE_MIN
+#define RC_RANGE_MIN 172
+#define RC_RANGE_MAX 1811
+#define RC_RANGE_TERM 992
+#define RC_RANGE_WIDE 1639
+#define RC_RANGE_TH_MIN 271
+#define RC_RANGE_TH_MAX 1791
+#define RC_RANGE_TH_WIDE 1520
+#endif
+""",
+)
+
+replace_once(
     "src/main/rx/rx.c",
     """#include "rx/rx_spi.h"
 #include "rx/targetcustomserial.h"
@@ -455,6 +519,142 @@ replace_once(
 )
 
 replace_once(
+    "src/main/rx/rx.c",
+    """#endif
+
+    DEBUG_SET(DEBUG_FAILSAFE, 1, rxSignalReceived);
+    DEBUG_SET(DEBUG_RX_SIGNAL_LOSS, 0, rxSignalReceived);
+}
+""".replace("#endif\n\n", "#endif\n    \n"),
+    """#endif
+
+    if (followCrsfOverridePending()) {
+        rxDataProcessingRequired = true;
+    }
+
+    DEBUG_SET(DEBUG_FAILSAFE, 1, rxSignalReceived);
+    DEBUG_SET(DEBUG_RX_SIGNAL_LOSS, 0, rxSignalReceived);
+}
+""",
+)
+
+replace_once(
+    "src/main/sensors/gyro.h",
+    """#pragma once
+
+#include "common/axis.h"
+""",
+    """#pragma once
+
+#include <stdbool.h>
+#include <stdint.h>
+
+#include "common/axis.h"
+""",
+)
+
+replace_once(
+    "src/main/sensors/gyro.h",
+    """#include "pg/pg.h"
+""",
+    """#include "pg/pg.h"
+
+#include "follow/follow_gyrocal.h"
+""",
+)
+
+replace_once(
+    "src/main/sensors/gyro.h",
+    """    uint8_t simplified_gyro_filter;
+    uint8_t simplified_gyro_filter_multiplier;
+} gyroConfig_t;
+""",
+    """    uint8_t simplified_gyro_filter;
+    uint8_t simplified_gyro_filter_multiplier;
+    gyroCalibrationConfig_t gyroCalibration[GYRO_CALIBRATION_CONFIG_COUNT];
+} gyroConfig_t;
+""",
+)
+
+replace_once(
+    "src/main/sensors/gyro.h",
+    """void gyroStartCalibration(bool isFirstArmingCalibration);
+bool isFirstArmingGyroCalibrationRunning(void);
+""",
+    """void gyroStartCalibration(bool isFirstArmingCalibration);
+bool gyroSaveCalibration(void);
+void gyroResetSavedCalibration(void);
+void gyroApplySavedCalibration(gyroSensor_t *gyroSensor, uint8_t gyroIndex);
+bool isFirstArmingGyroCalibrationRunning(void);
+""",
+)
+
+replace_once(
+    "src/main/sensors/gyro.c",
+    """PG_REGISTER_WITH_RESET_FN(gyroConfig_t, gyroConfig, PG_GYRO_CONFIG, 9);
+""",
+    """PG_REGISTER_WITH_RESET_FN(gyroConfig_t, gyroConfig, PG_GYRO_CONFIG, 10);
+""",
+)
+
+replace_once(
+    "src/main/sensors/gyro.c",
+    """    gyroConfig->gyro_lpf1_dyn_expo = 5;
+    gyroConfig->simplified_gyro_filter = true;
+    gyroConfig->simplified_gyro_filter_multiplier = SIMPLIFIED_TUNING_DEFAULT;
+}
+""",
+    """    gyroConfig->gyro_lpf1_dyn_expo = 5;
+    gyroConfig->simplified_gyro_filter = true;
+    gyroConfig->simplified_gyro_filter_multiplier = SIMPLIFIED_TUNING_DEFAULT;
+    for (int gyroIndex = 0; gyroIndex < GYRO_CALIBRATION_CONFIG_COUNT; gyroIndex++) {
+        for (int valueIndex = 0; valueIndex < GYRO_CALIBRATION_CONFIG_VALUE_COUNT; valueIndex++) {
+            gyroConfig->gyroCalibration[gyroIndex].raw[valueIndex] = 0;
+        }
+    }
+}
+""",
+)
+
+replace_once(
+    "src/main/sensors/gyro_init.c",
+    """        gyroInitSensor(&gyro.gyroSensor2, gyroDeviceConfig(1));
+        gyro.gyroHasOverflowProtection = gyro.gyroHasOverflowProtection && gyro.gyroSensor2.gyroDev.gyroHasOverflowProtection;
+""",
+    """        gyroInitSensor(&gyro.gyroSensor2, gyroDeviceConfig(1));
+        gyroApplySavedCalibration(&gyro.gyroSensor2, GYRO_CONFIG_USE_GYRO_2);
+        gyro.gyroHasOverflowProtection = gyro.gyroHasOverflowProtection && gyro.gyroSensor2.gyroDev.gyroHasOverflowProtection;
+""",
+)
+
+replace_once(
+    "src/main/sensors/gyro_init.c",
+    """        gyroInitSensor(&gyro.gyroSensor1, gyroDeviceConfig(0));
+        gyro.gyroHasOverflowProtection =  gyro.gyroHasOverflowProtection && gyro.gyroSensor1.gyroDev.gyroHasOverflowProtection;
+""",
+    """        gyroInitSensor(&gyro.gyroSensor1, gyroDeviceConfig(0));
+        gyroApplySavedCalibration(&gyro.gyroSensor1, GYRO_CONFIG_USE_GYRO_1);
+        gyro.gyroHasOverflowProtection =  gyro.gyroHasOverflowProtection && gyro.gyroSensor1.gyroDev.gyroHasOverflowProtection;
+""",
+)
+
+replace_once(
+    "src/main/cli/settings.c",
+    """    { "gyro_calib_duration",        VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 50,  3000 }, PG_GYRO_CONFIG, offsetof(gyroConfig_t, gyroCalibrationDuration) },
+    { "gyro_calib_noise_limit",     VAR_UINT8  | MASTER_VALUE, .config.minmaxUnsigned = { 0,  200 }, PG_GYRO_CONFIG, offsetof(gyroConfig_t, gyroMovementCalibrationThreshold) },
+    { "gyro_offset_yaw",            VAR_INT16  | MASTER_VALUE, .config.minmax = { -1000, 1000 }, PG_GYRO_CONFIG, offsetof(gyroConfig_t, gyro_offset_yaw) },
+""",
+    """    { "gyro_calib_duration",        VAR_UINT16 | MASTER_VALUE, .config.minmaxUnsigned = { 50,  3000 }, PG_GYRO_CONFIG, offsetof(gyroConfig_t, gyroCalibrationDuration) },
+    { "gyro_calib_noise_limit",     VAR_UINT8  | MASTER_VALUE, .config.minmaxUnsigned = { 0,  200 }, PG_GYRO_CONFIG, offsetof(gyroConfig_t, gyroMovementCalibrationThreshold) },
+    { "gyro_offset_yaw",            VAR_INT16  | MASTER_VALUE, .config.minmax = { -1000, 1000 }, PG_GYRO_CONFIG, offsetof(gyroConfig_t, gyro_offset_yaw) },
+    { "gyro_1_calibration",         VAR_INT32  | MASTER_VALUE | MODE_ARRAY, .config.array.length = GYRO_CALIBRATION_CONFIG_VALUE_COUNT, PG_GYRO_CONFIG, offsetof(gyroConfig_t, gyroCalibration) },
+#ifdef USE_MULTI_GYRO
+    { "gyro_2_calibration",         VAR_INT32  | MASTER_VALUE | MODE_ARRAY, .config.array.length = GYRO_CALIBRATION_CONFIG_VALUE_COUNT, PG_GYRO_CONFIG, offsetof(gyroConfig_t, gyroCalibration) + sizeof(gyroCalibrationConfig_t) },
+#endif
+""",
+)
+
+replace_once(
     "src/main/cli/cli.c",
     """#include "telemetry/frsky_hub.h"
 #include "telemetry/telemetry.h"
@@ -465,6 +665,7 @@ replace_once(
 #include "telemetry/telemetry.h"
 
 #include "follow/follow_bundle.h"
+#include "follow/follow_gyrocal.h"
 #include "cli.h"
 """,
 )
@@ -559,8 +760,34 @@ replace_once(
 """,
     """#endif
 #endif
+    CLI_COMMAND_DEF("gyrocal", "calibrate/save gyro zero offset", "status | start | save | show | reset", followCliGyroCal),
     CLI_COMMAND_DEF("followPID", "get/set follow PID profile", "get <index> | set <index> <float...>", cliFollowPid),
     CLI_COMMAND_DEF("get", "get variable value", "[name]", cliGet),
+""",
+)
+
+replace_once(
+    "src/main/msp/msp.c",
+    """    case MSP_BUILD_INFO:
+        sbufWriteData(dst, buildDate, BUILD_DATE_LENGTH);
+        sbufWriteData(dst, buildTime, BUILD_TIME_LENGTH);
+        sbufWriteData(dst, shortGitRevision, GIT_SHORT_REVISION_LENGTH);
+        // Added in API version 1.46
+        sbufWriteBuildInfoFlags(dst);
+        break;
+""",
+    """    case MSP_BUILD_INFO: {
+        sbufWriteData(dst, buildDate, BUILD_DATE_LENGTH);
+        sbufWriteData(dst, buildTime, BUILD_TIME_LENGTH);
+        char shortGitRevisionOutput[GIT_SHORT_REVISION_LENGTH] = { 0 };
+        for (int i = 0; i < GIT_SHORT_REVISION_LENGTH && shortGitRevision[i]; i++) {
+            shortGitRevisionOutput[i] = shortGitRevision[i];
+        }
+        sbufWriteData(dst, shortGitRevisionOutput, sizeof(shortGitRevisionOutput));
+        // Added in API version 1.46
+        sbufWriteBuildInfoFlags(dst);
+        break;
+    }
 """,
 )
 

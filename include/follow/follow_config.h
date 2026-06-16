@@ -9,8 +9,8 @@
 #define RC_RANGE_TERM 992
 #define RC_RANGE_WIDE 1639
 #define RC_RANGE_TH_MIN 271
-#define RC_RANGE_TH_MAX 1631
-#define RC_RANGE_TH_WIDE 1360
+#define RC_RANGE_TH_MAX 1791
+#define RC_RANGE_TH_WIDE 1520
 
 #ifndef PI
 #define PI 3.14159265358979323846
@@ -25,6 +25,7 @@
 
 #define FOLLOW_CAMERA_ANGLE_RAD 1.5708f
 #define FOLLOW_GUIDANCE_GAIN 10
+#define USE_ALPHA_BETAFLIGHT 1
 
 #ifndef FOLLOW_VERSION
 #define FOLLOW_VERSION "dev"
@@ -59,11 +60,13 @@
 #include "config/config.h"
 #include "drivers/flash.h"
 #include "drivers/nvic.h"
+#include "drivers/pwm_output.h"
 #include "drivers/serial.h"
 #include "drivers/time.h"
 #include "drivers/timer.h"
 #include "fc/dispatch.h"
 #include "fc/runtime_config.h"
+#include "io/beeper.h"
 #include "io/serial.h"
 #include "pg/pg.h"
 #include "rx/crsf.h"

@@ -26,3 +26,4 @@ void followMoveLeftDefault(void);
 void followMoveRightDefault(void);
 void followConfirmTrackDefault(void);
 void followSwitchLensDefault(uint8_t value);
+void followFuseTriggerHandle(uint32_t startTimeMs);
